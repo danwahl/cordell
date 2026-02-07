@@ -83,13 +83,24 @@ class Scheduler:
             logger.debug(f"Skipping job '{job_name}' - outside active hours")
             return
 
-        logger.info(f"Running scheduled job '{job_name}' on session '{job_config.session}'")
+        # Get or create active session for this agent
+        try:
+            session = self._session_manager.get_or_create_active_session(job_config.agent)
+        except ValueError as e:
+            logger.error(f"Job '{job_name}' failed - unknown agent '{job_config.agent}': {e}")
+            self._notification_bus.create_and_post(
+                source=job_config.agent,
+                summary=f"[{job_name}] Error: Unknown agent '{job_config.agent}'",
+            )
+            return
+
+        logger.info(f"Running scheduled job '{job_name}' on session '{session.session_id}' (agent: {job_config.agent})")
 
         try:
             # Collect response
             response_text = ""
             for msg in self._session_manager.send_message_sync(
-                job_config.session, job_config.prompt
+                session.session_id, job_config.prompt
             ):
                 if msg.type == "text":
                     response_text += msg.content
@@ -105,14 +116,14 @@ class Scheduler:
             # Post notification
             summary = response_text[:200] if response_text else "(No response)"
             self._notification_bus.create_and_post(
-                source=job_config.session,
+                source=job_config.agent,
                 summary=f"[{job_name}] {summary}",
             )
 
         except Exception as e:
             logger.error(f"Job '{job_name}' failed: {e}")
             self._notification_bus.create_and_post(
-                source=job_config.session,
+                source=job_config.agent,
                 summary=f"[{job_name}] Error: {e}",
             )
 
@@ -134,7 +145,7 @@ class Scheduler:
             {
                 "name": job.name,
                 "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
-                "session": self._config.jobs[job.id].session if job.id in self._config.jobs else None,
+                "agent": self._config.jobs[job.id].agent if job.id in self._config.jobs else None,
             }
             for job in self._scheduler.get_jobs()
         ]

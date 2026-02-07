@@ -53,11 +53,11 @@ class TestJobConfig:
 
     def test_minimal_config(self):
         config = JobConfig(
-            session="main",
+            agent="main",
             schedule="0 8 * * *",
             prompt="Hello",
         )
-        assert config.session == "main"
+        assert config.agent == "main"
         assert config.schedule == "0 8 * * *"
         assert config.prompt == "Hello"
         assert config.active_hours is None
@@ -65,7 +65,7 @@ class TestJobConfig:
 
     def test_full_config(self):
         config = JobConfig(
-            session="monitor",
+            agent="monitor",
             schedule="*/30 * * * *",
             prompt="Check status",
             active_hours=(6, 22),
@@ -132,7 +132,7 @@ class TestLoadCordellConfig:
         config_data = {
             "jobs": {
                 "morning": {
-                    "session": "main",
+                    "agent": "main",
                     "schedule": "0 8 * * *",
                     "prompt": "Good morning",
                 },
@@ -147,7 +147,7 @@ class TestLoadCordellConfig:
         config = load_cordell_config(config_path)
         assert len(config.jobs) == 1
         assert "morning" in config.jobs
-        assert config.jobs["morning"].session == "main"
+        assert config.jobs["morning"].agent == "main"
         assert config.default_model == "opus"
         assert config.log_level == "DEBUG"
 

@@ -25,7 +25,7 @@ class AgentConfig(BaseModel):
 class JobConfig(BaseModel):
     """Configuration for a scheduled job."""
 
-    session: str
+    agent: str
     schedule: str  # cron expression
     prompt: str
     active_hours: tuple[int, int] | None = None  # (start_hour, end_hour)
