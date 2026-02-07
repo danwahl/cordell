@@ -229,7 +229,7 @@ def init_messages(session_id: str, manager: SessionManager) -> None:
     key = get_messages_key(session_id)
 
     if key not in st.session_state:
-        messages = []
+        messages: list[dict] = []
 
         # Get workspace for this session
         workspace = manager.get_workspace(session_id)
@@ -240,13 +240,23 @@ def init_messages(session_id: str, manager: SessionManager) -> None:
                 if entry.type == "user" and entry.content and entry.content.strip():
                     messages.append({"role": "user", "content": entry.content})
                 elif entry.type == "assistant" and (entry.content or entry.tool_uses):
-                    messages.append(
-                        {
-                            "role": "assistant",
-                            "content": entry.content or "",
-                            "tool_uses": entry.tool_uses,
-                        }
-                    )
+                    # Merge consecutive assistant messages (SDK stores them separately)
+                    if messages and messages[-1]["role"] == "assistant":
+                        prev = messages[-1]
+                        if entry.content:
+                            if prev["content"]:
+                                prev["content"] += "\n" + entry.content
+                            else:
+                                prev["content"] = entry.content
+                        prev["tool_uses"].extend(entry.tool_uses)
+                    else:
+                        messages.append(
+                            {
+                                "role": "assistant",
+                                "content": entry.content or "",
+                                "tool_uses": list(entry.tool_uses),
+                            }
+                        )
 
         st.session_state[key] = messages
 
