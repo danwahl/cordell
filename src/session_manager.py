@@ -190,6 +190,50 @@ class SessionManager:
             )
         return self.create_session(agent_name)
 
+    def _find_sdk_session_id(self, session_id: str) -> str | None:
+        """Find the SDK's session ID by looking for the newest JSONL file."""
+        from history import get_session_dir
+
+        session_state = self._state.sessions.get(session_id)
+        if session_state is None:
+            return None
+
+        workspace = get_workspaces_dir() / session_state.agent
+        session_dir = get_session_dir(workspace)
+
+        if not session_dir.exists():
+            return None
+
+        # Find the newest JSONL file
+        jsonl_files = list(session_dir.glob("*.jsonl"))
+        if not jsonl_files:
+            return None
+
+        newest = max(jsonl_files, key=lambda p: p.stat().st_mtime)
+        return newest.stem  # filename without .jsonl extension
+
+    def _update_session_id(self, old_id: str, new_id: str) -> None:
+        """Update session ID in state and internal mappings."""
+        if old_id == new_id:
+            return
+
+        logger.info(f"Updating session ID: {old_id} -> {new_id}")
+
+        # Update state
+        if old_id in self._state.sessions:
+            session = self._state.sessions.pop(old_id)
+            session.session_id = new_id
+            self._state.sessions[new_id] = session
+            self._save_state()
+
+        # Update internal mappings
+        if old_id in self._clients:
+            self._clients[new_id] = self._clients.pop(old_id)
+        if old_id in self._locks:
+            self._locks[new_id] = self._locks.pop(old_id)
+        if old_id in self._busy:
+            self._busy[new_id] = self._busy.pop(old_id)
+
     async def _stream_message_async(self, session_id: str, content: str):
         """Stream messages as they arrive (async generator)."""
         client = await self._get_client(session_id)
@@ -204,6 +248,11 @@ class SessionManager:
                 async for msg in client.receive_response():
                     for converted in self._convert_message(msg):
                         yield converted
+
+                # After first message, capture SDK's session ID
+                sdk_session_id = self._find_sdk_session_id(session_id)
+                if sdk_session_id and sdk_session_id != session_id:
+                    self._update_session_id(session_id, sdk_session_id)
 
             except Exception as e:
                 logger.error(f"Error sending message to {session_id}: {e}")
