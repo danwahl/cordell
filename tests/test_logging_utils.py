@@ -2,8 +2,6 @@
 
 import logging
 
-import pytest
-
 from logging_utils import REDACTION_PLACEHOLDER, redact_secrets, setup_logging
 
 

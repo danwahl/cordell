@@ -10,7 +10,6 @@ from pathlib import Path
 
 import streamlit as st
 
-from config import get_workspaces_dir
 from history import get_history
 from logging_utils import setup_logging
 from notifications import NotificationBus
@@ -79,7 +78,9 @@ def render_sidebar(manager: SessionManager, bus: NotificationBus) -> SessionInfo
             return None
 
         # Group sessions by agent
-        sessions_by_agent: dict[str, list[SessionInfo]] = {agent: [] for agent in agents}
+        sessions_by_agent: dict[str, list[SessionInfo]] = {
+            agent: [] for agent in agents
+        }
         for session in sessions:
             if session.agent in sessions_by_agent:
                 sessions_by_agent[session.agent].append(session)
@@ -106,7 +107,9 @@ def render_sidebar(manager: SessionManager, bus: NotificationBus) -> SessionInfo
             # Default to most recent active session for first agent, or create one
             for agent in agents:
                 if sessions_by_agent[agent]:
-                    active = [s for s in sessions_by_agent[agent] if s.status == "active"]
+                    active = [
+                        s for s in sessions_by_agent[agent] if s.status == "active"
+                    ]
                     if active:
                         st.session_state.selected_session_id = active[0].session_id
                         break
@@ -142,7 +145,9 @@ def render_sidebar(manager: SessionManager, bus: NotificationBus) -> SessionInfo
             # If current selection not in options, default to first
             if current_label not in session_options and session_options:
                 current_label = session_options[0]
-                st.session_state.selected_session_id = session_lookup[current_label].session_id
+                st.session_state.selected_session_id = session_lookup[
+                    current_label
+                ].session_id
 
             selected_label = st.radio(
                 "Select session",
@@ -161,11 +166,15 @@ def render_sidebar(manager: SessionManager, bus: NotificationBus) -> SessionInfo
 
                 # Archive/unarchive button
                 if selected_session.status == "active":
-                    if st.button("📦 Archive", key="archive_btn", use_container_width=True):
+                    if st.button(
+                        "📦 Archive", key="archive_btn", use_container_width=True
+                    ):
                         manager.archive_session(selected_session.session_id)
                         st.rerun()
                 else:
-                    if st.button("📂 Unarchive", key="unarchive_btn", use_container_width=True):
+                    if st.button(
+                        "📂 Unarchive", key="unarchive_btn", use_container_width=True
+                    ):
                         manager.unarchive_session(selected_session.session_id)
                         st.rerun()
         else:
@@ -198,9 +207,8 @@ def render_sidebar(manager: SessionManager, bus: NotificationBus) -> SessionInfo
 
                 for notification in notifications:
                     icon = "📬" if not notification.read else "📭"
-                    st.markdown(
-                        f"{icon} **{notification.source}**: {notification.summary[:100]}"
-                    )
+                    summary = notification.summary[:100]
+                    st.markdown(f"{icon} **{notification.source}**: {summary}")
                     st.caption(notification.timestamp.strftime("%Y-%m-%d %H:%M"))
 
                     if not notification.read:
@@ -232,11 +240,13 @@ def init_messages(session_id: str, manager: SessionManager) -> None:
                 if entry.type == "user" and entry.content and entry.content.strip():
                     messages.append({"role": "user", "content": entry.content})
                 elif entry.type == "assistant" and entry.content:
-                    messages.append({
-                        "role": "assistant",
-                        "content": entry.content,
-                        "tool_uses": entry.tool_uses,
-                    })
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": entry.content,
+                            "tool_uses": entry.tool_uses,
+                        }
+                    )
 
         st.session_state[key] = messages
 

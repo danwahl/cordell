@@ -41,7 +41,8 @@ def setup_logging(level: str | None = None) -> None:
     """Set up logging with secret redaction.
 
     Args:
-        level: Log level (DEBUG, INFO, WARNING, ERROR). Defaults to CORDELL_LOG_LEVEL env var or INFO.
+        level: Log level (DEBUG, INFO, WARNING, ERROR).
+               Defaults to CORDELL_LOG_LEVEL env var or INFO.
     """
     if level is None:
         level = os.environ.get("CORDELL_LOG_LEVEL", "INFO")

@@ -1,10 +1,7 @@
 """Tests for history module."""
 
 import json
-from datetime import datetime
 from pathlib import Path
-
-import pytest
 
 from history import (
     HistoryReader,
@@ -145,12 +142,14 @@ class TestParseJsonlEntry:
     """Tests for parse_jsonl_entry."""
 
     def test_user_message(self):
-        line = json.dumps({
-            "type": "user",
-            "message": {"role": "user", "content": "Hello"},
-            "uuid": "abc-123",
-            "timestamp": "2024-01-15T10:00:00Z",
-        })
+        line = json.dumps(
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "Hello"},
+                "uuid": "abc-123",
+                "timestamp": "2024-01-15T10:00:00Z",
+            }
+        )
         result = parse_jsonl_entry(line)
         assert result is not None
         assert result.type == "user"
@@ -158,16 +157,18 @@ class TestParseJsonlEntry:
         assert result.uuid == "abc-123"
 
     def test_assistant_message(self):
-        line = json.dumps({
-            "type": "assistant",
-            "message": {
-                "role": "assistant",
-                "content": [{"type": "text", "text": "Hi there!"}],
-                "usage": {"input_tokens": 100, "output_tokens": 50},
-            },
-            "uuid": "def-456",
-            "timestamp": "2024-01-15T10:00:05Z",
-        })
+        line = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Hi there!"}],
+                    "usage": {"input_tokens": 100, "output_tokens": 50},
+                },
+                "uuid": "def-456",
+                "timestamp": "2024-01-15T10:00:05Z",
+            }
+        )
         result = parse_jsonl_entry(line)
         assert result is not None
         assert result.type == "assistant"
@@ -177,17 +178,23 @@ class TestParseJsonlEntry:
         assert result.token_usage.output_tokens == 50
 
     def test_assistant_with_tool_use(self):
-        line = json.dumps({
-            "type": "assistant",
-            "message": {
-                "role": "assistant",
-                "content": [
-                    {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}},
-                ],
-            },
-            "uuid": "ghi-789",
-            "timestamp": "2024-01-15T10:00:10Z",
-        })
+        line = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Bash",
+                            "input": {"command": "ls"},
+                        },
+                    ],
+                },
+                "uuid": "ghi-789",
+                "timestamp": "2024-01-15T10:00:10Z",
+            }
+        )
         result = parse_jsonl_entry(line)
         assert result is not None
         assert len(result.tool_uses) == 1
@@ -219,23 +226,36 @@ class TestGetHistory:
         session_dir.mkdir(parents=True)
 
         # Patch get_session_dir to return our mock
-        monkeypatch.setattr("history.get_session_dir", lambda w: tmp_path / "projects" / encode_project_path(w))
+        monkeypatch.setattr(
+            "history.get_session_dir",
+            lambda w: tmp_path / "projects" / encode_project_path(w),
+        )
 
         # Create JSONL file
         jsonl_path = session_dir / "session-123.jsonl"
         with open(jsonl_path, "w") as f:
-            f.write(json.dumps({
-                "type": "user",
-                "message": {"content": "Hello"},
-                "uuid": "msg-1",
-                "timestamp": "2024-01-15T10:00:00Z",
-            }) + "\n")
-            f.write(json.dumps({
-                "type": "assistant",
-                "message": {"content": [{"type": "text", "text": "Hi!"}]},
-                "uuid": "msg-2",
-                "timestamp": "2024-01-15T10:00:05Z",
-            }) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "type": "user",
+                        "message": {"content": "Hello"},
+                        "uuid": "msg-1",
+                        "timestamp": "2024-01-15T10:00:00Z",
+                    }
+                )
+                + "\n"
+            )
+            f.write(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {"content": [{"type": "text", "text": "Hi!"}]},
+                        "uuid": "msg-2",
+                        "timestamp": "2024-01-15T10:00:05Z",
+                    }
+                )
+                + "\n"
+            )
 
         result = get_history("session-123", tmp_path)
         assert len(result) == 2
@@ -247,18 +267,26 @@ class TestGetHistory:
 
         session_dir = tmp_path / "projects" / encode_project_path(tmp_path)
         session_dir.mkdir(parents=True)
-        monkeypatch.setattr("history.get_session_dir", lambda w: tmp_path / "projects" / encode_project_path(w))
+        monkeypatch.setattr(
+            "history.get_session_dir",
+            lambda w: tmp_path / "projects" / encode_project_path(w),
+        )
 
         # Create JSONL with duplicate UUIDs
         jsonl_path = session_dir / "session-123.jsonl"
         with open(jsonl_path, "w") as f:
             for _ in range(3):
-                f.write(json.dumps({
-                    "type": "user",
-                    "message": {"content": "Hello"},
-                    "uuid": "same-uuid",
-                    "timestamp": "2024-01-15T10:00:00Z",
-                }) + "\n")
+                f.write(
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "message": {"content": "Hello"},
+                            "uuid": "same-uuid",
+                            "timestamp": "2024-01-15T10:00:00Z",
+                        }
+                    )
+                    + "\n"
+                )
 
         result = get_history("session-123", tmp_path)
         # Should deduplicate to 1
@@ -269,17 +297,25 @@ class TestGetHistory:
 
         session_dir = tmp_path / "projects" / encode_project_path(tmp_path)
         session_dir.mkdir(parents=True)
-        monkeypatch.setattr("history.get_session_dir", lambda w: tmp_path / "projects" / encode_project_path(w))
+        monkeypatch.setattr(
+            "history.get_session_dir",
+            lambda w: tmp_path / "projects" / encode_project_path(w),
+        )
 
         jsonl_path = session_dir / "session-123.jsonl"
         with open(jsonl_path, "w") as f:
             for i in range(10):
-                f.write(json.dumps({
-                    "type": "user",
-                    "message": {"content": f"Message {i}"},
-                    "uuid": f"msg-{i}",
-                    "timestamp": "2024-01-15T10:00:00Z",
-                }) + "\n")
+                f.write(
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "message": {"content": f"Message {i}"},
+                            "uuid": f"msg-{i}",
+                            "timestamp": "2024-01-15T10:00:00Z",
+                        }
+                    )
+                    + "\n"
+                )
 
         result = get_history("session-123", tmp_path, limit=5)
         assert len(result) == 5

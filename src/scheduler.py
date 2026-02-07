@@ -57,7 +57,9 @@ class Scheduler:
                 name=job_name,
                 replace_existing=True,
             )
-            logger.info(f"Scheduled job '{job_name}' with schedule '{job_config.schedule}'")
+            logger.info(
+                f"Scheduled job '{job_name}' with schedule '{job_config.schedule}'"
+            )
         except Exception as e:
             logger.error(f"Failed to schedule job '{job_name}': {e}")
 
@@ -85,16 +87,23 @@ class Scheduler:
 
         # Get or create active session for this agent
         try:
-            session = self._session_manager.get_or_create_active_session(job_config.agent)
+            session = self._session_manager.get_or_create_active_session(
+                job_config.agent
+            )
         except ValueError as e:
-            logger.error(f"Job '{job_name}' failed - unknown agent '{job_config.agent}': {e}")
+            logger.error(
+                f"Job '{job_name}' failed - unknown agent '{job_config.agent}': {e}"
+            )
             self._notification_bus.create_and_post(
                 source=job_config.agent,
                 summary=f"[{job_name}] Error: Unknown agent '{job_config.agent}'",
             )
             return
 
-        logger.info(f"Running scheduled job '{job_name}' on session '{session.session_id}' (agent: {job_config.agent})")
+        logger.info(
+            f"Running job '{job_name}' on session '{session.session_id}' "
+            f"(agent: {job_config.agent})"
+        )
 
         try:
             # Collect response
@@ -110,7 +119,7 @@ class Scheduler:
 
             # Check for heartbeat OK
             if job_config.suppress_ok and HEARTBEAT_OK in response_text:
-                logger.info(f"Job '{job_name}' completed with HEARTBEAT_OK - suppressing notification")
+                logger.info(f"Job '{job_name}' HEARTBEAT_OK - suppressed")
                 return
 
             # Post notification
@@ -144,8 +153,12 @@ class Scheduler:
         return [
             {
                 "name": job.name,
-                "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
-                "agent": self._config.jobs[job.id].agent if job.id in self._config.jobs else None,
+                "next_run": job.next_run_time.isoformat()
+                if job.next_run_time
+                else None,
+                "agent": self._config.jobs[job.id].agent
+                if job.id in self._config.jobs
+                else None,
             }
             for job in self._scheduler.get_jobs()
         ]

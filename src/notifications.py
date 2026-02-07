@@ -79,7 +79,8 @@ class NotificationBus:
 
         self._notifications.append(notification)
         self._save()
-        logger.info(f"Posted notification from {notification.source}: {notification.summary[:50]}")
+        summary = notification.summary[:50]
+        logger.info(f"Posted notification from {notification.source}: {summary}")
 
     def create_and_post(self, source: str, summary: str) -> Notification:
         """Create and post a new notification."""
