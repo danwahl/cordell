@@ -107,11 +107,18 @@ class SessionManager:
         self, session_id: str, agent_config: AgentConfig
     ) -> ClaudeSDKClient:
         """Connect a new or resumed client for a session."""
-        # Check if this is a resume (session_id exists in state)
+        from history import get_session_jsonl_path
+
+        # Only resume if the SDK session file actually exists
+        workspace = get_workspaces_dir() / agent_config.name
+        jsonl_path = get_session_jsonl_path(session_id, workspace)
+
         resume_id = None
-        if session_id in self._state.sessions:
+        if jsonl_path.exists():
             resume_id = session_id
             logger.info(f"Resuming session {session_id}")
+        else:
+            logger.info(f"Starting new session {session_id}")
 
         options = self._build_options(agent_config, resume_id)
         client = ClaudeSDKClient(options=options)
