@@ -6,19 +6,17 @@ and provides an asyncio bridge for Streamlit's synchronous runtime.
 
 import asyncio
 import logging
-import os
 import queue
 import threading
 from collections.abc import Iterator
-from datetime import datetime
 from pathlib import Path
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
 from config import (
     AgentConfig,
-    SessionState,
     SessionsState,
+    create_session_state,
     get_agent_system_prompt,
     get_workspaces_dir,
     load_all_agents,
@@ -41,9 +39,9 @@ class SessionManager:
         """
         self._agents_dir = agents_dir
         self._agents: dict[str, AgentConfig] = {}
-        self._clients: dict[str, ClaudeSDKClient] = {}
-        self._locks: dict[str, asyncio.Lock] = {}
-        self._busy: dict[str, bool] = {}
+        self._clients: dict[str, ClaudeSDKClient] = {}  # Keyed by session_id
+        self._locks: dict[str, asyncio.Lock] = {}  # Keyed by session_id
+        self._busy: dict[str, bool] = {}  # Keyed by session_id
         self._state: SessionsState = SessionsState()
 
         # Asyncio event loop in background thread
@@ -74,102 +72,139 @@ class SessionManager:
         """Save session state to disk."""
         save_sessions_state(self._state)
 
-    def _get_workspace(self, agent_name: str) -> Path:
-        """Get the workspace directory for an agent."""
-        workspace = get_workspaces_dir() / agent_name
+    def get_workspace(self, session_id: str) -> Path | None:
+        """Get the workspace directory for a session."""
+        session_state = self._state.sessions.get(session_id)
+        if session_state is None:
+            return None
+        workspace = get_workspaces_dir() / session_state.agent
         workspace.mkdir(parents=True, exist_ok=True)
         return workspace
 
-    def _build_options(self, agent_config: AgentConfig, session_id: str | None = None) -> ClaudeAgentOptions:
+    def _build_options(
+        self, agent_config: AgentConfig, resume_id: str | None = None
+    ) -> ClaudeAgentOptions:
         """Build ClaudeAgentOptions from an agent configuration."""
         agent_dir = self._agents_dir / agent_config.name
-
-        # Get system prompt
         system_prompt = get_agent_system_prompt(agent_config, agent_dir)
 
-        # Build options
+        workspace = get_workspaces_dir() / agent_config.name
+        workspace.mkdir(parents=True, exist_ok=True)
+
         options = ClaudeAgentOptions(
             model=agent_config.model,
             system_prompt=system_prompt,
             permission_mode=agent_config.permission_mode,
-            allowed_tools=agent_config.allowed_tools if agent_config.allowed_tools else None,
-            cwd=str(self._get_workspace(agent_config.name)),
-            resume=session_id,
+            allowed_tools=agent_config.allowed_tools
+            if agent_config.allowed_tools
+            else None,
+            cwd=str(workspace),
+            resume=resume_id,
+            env=agent_config.env if agent_config.env else None,
         )
 
         return options
 
-    async def _get_or_create_client(self, agent_name: str) -> ClaudeSDKClient:
-        """Get an existing client or create a new one."""
-        if agent_name in self._clients:
-            return self._clients[agent_name]
+    async def _connect_client(
+        self, session_id: str, agent_config: AgentConfig
+    ) -> ClaudeSDKClient:
+        """Connect a new or resumed client for a session."""
+        # Check if this is a resume (session_id exists in state)
+        resume_id = None
+        if session_id in self._state.sessions:
+            resume_id = session_id
+            logger.info(f"Resuming session {session_id}")
 
-        if agent_name not in self._agents:
-            raise ValueError(f"Unknown agent: {agent_name}")
+        options = self._build_options(agent_config, resume_id)
+        client = ClaudeSDKClient(options=options)
+        await client.connect()
+        logger.info(f"Connected client for session {session_id}")
 
-        agent_config = self._agents[agent_name]
-
-        # Check for existing session
-        session_id = None
-        if agent_name in self._state.sessions:
-            session_id = self._state.sessions[agent_name].session_id
-            logger.info(f"Resuming session {session_id} for agent {agent_name}")
-
-        # Apply any env var overrides
-        old_env = {}
-        for key, value in agent_config.env.items():
-            old_env[key] = os.environ.get(key)
-            os.environ[key] = value
-
-        try:
-            options = self._build_options(agent_config, session_id)
-            client = ClaudeSDKClient(options=options)
-            await client.connect()
-            logger.info(f"Connected client for agent {agent_name}")
-            self._clients[agent_name] = client
-            self._locks[agent_name] = asyncio.Lock()
-            self._busy[agent_name] = False
-        finally:
-            # Restore env vars
-            for key, value in old_env.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
+        self._clients[session_id] = client
+        self._locks[session_id] = asyncio.Lock()
+        self._busy[session_id] = False
 
         return client
 
-    async def _stream_message_async(self, session: str, content: str):
-        """Stream messages as they arrive (async generator)."""
-        client = await self._get_or_create_client(session)
+    async def _get_client(self, session_id: str) -> ClaudeSDKClient:
+        """Get or lazily connect a client for a session."""
+        if session_id in self._clients:
+            return self._clients[session_id]
 
-        # Acquire lock
-        lock = self._locks[session]
+        # Find the session state to get the agent config
+        session_state = self._state.sessions.get(session_id)
+        if session_state is None:
+            raise ValueError(f"Unknown session: {session_id}")
+
+        agent_config = self._agents.get(session_state.agent)
+        if agent_config is None:
+            raise ValueError(f"Unknown agent: {session_state.agent}")
+
+        return await self._connect_client(session_id, agent_config)
+
+    def create_session(self, agent_name: str) -> SessionInfo:
+        """Create a new session for an agent.
+
+        The session will connect lazily on first message.
+        """
+        if agent_name not in self._agents:
+            raise ValueError(f"Unknown agent: {agent_name}")
+
+        # Generate a temporary session ID - the SDK will assign the real one
+        # We use the agent name with a timestamp as a placeholder
+        import uuid
+
+        temp_session_id = str(uuid.uuid4())
+
+        session_state = create_session_state(agent_name, temp_session_id)
+        self._state.sessions[temp_session_id] = session_state
+        self._save_state()
+
+        logger.info(f"Created new session {temp_session_id} for agent {agent_name}")
+
+        return SessionInfo(
+            session_id=temp_session_id,
+            agent=agent_name,
+            label=session_state.label,
+            created_at=session_state.created_at,
+            status=session_state.status,
+            is_busy=False,
+        )
+
+    def get_or_create_active_session(self, agent_name: str) -> SessionInfo:
+        """Get the active session for an agent, or create one if none exists."""
+        active = self._state.get_active_session(agent_name)
+        if active:
+            return SessionInfo(
+                session_id=active.session_id,
+                agent=active.agent,
+                label=active.label,
+                created_at=active.created_at,
+                status=active.status,
+                is_busy=self._busy.get(active.session_id, False),
+            )
+        return self.create_session(agent_name)
+
+    async def _stream_message_async(self, session_id: str, content: str):
+        """Stream messages as they arrive (async generator)."""
+        client = await self._get_client(session_id)
+
+        lock = self._locks[session_id]
         async with lock:
-            self._busy[session] = True
+            self._busy[session_id] = True
 
             try:
                 await client.query(content)
 
-                session_id_captured = False
                 async for msg in client.receive_response():
-                    # Capture session ID from init message
-                    if not session_id_captured and hasattr(msg, "subtype"):
-                        if msg.subtype == "init" and hasattr(msg, "data"):
-                            new_session_id = msg.data.get("session_id")
-                            if new_session_id:
-                                self._update_session_state(session, new_session_id)
-                                session_id_captured = True
-
-                    # Convert and yield SDK messages
                     for converted in self._convert_message(msg):
                         yield converted
 
             except Exception as e:
-                logger.error(f"Error sending message to {session}: {e}")
+                logger.error(f"Error sending message to {session_id}: {e}")
                 yield Message(type="error", content=str(e))
             finally:
-                self._busy[session] = False
+                self._busy[session_id] = False
 
         yield Message(type="done", content="")
 
@@ -186,7 +221,6 @@ class SessionManager:
             elif isinstance(content, list):
                 text_parts = []
                 for block in content:
-                    # Check block class name (SDK uses TextBlock, ToolUseBlock, etc.)
                     block_class = type(block).__name__
 
                     if block_class == "TextBlock":
@@ -194,35 +228,39 @@ class SessionManager:
                         if text:
                             text_parts.append(text)
                     elif block_class == "ToolUseBlock":
-                        # Flush any accumulated text first
                         if text_parts:
-                            messages.append(Message(type="text", content="\n".join(text_parts)))
+                            messages.append(
+                                Message(type="text", content="\n".join(text_parts))
+                            )
                             text_parts = []
-                        # Add tool use
                         name = getattr(block, "name", None)
                         input_data = getattr(block, "input", None)
-                        messages.append(Message(
-                            type="tool_use",
-                            content=f"Using {name or 'unknown'}",
-                            tool_name=name,
-                            tool_input=input_data,
-                        ))
+                        messages.append(
+                            Message(
+                                type="tool_use",
+                                content=f"Using {name or 'unknown'}",
+                                tool_name=name,
+                                tool_input=input_data,
+                            )
+                        )
                     elif isinstance(block, dict):
-                        # Fallback for dict-based blocks
                         if block.get("type") == "text":
                             text_parts.append(block.get("text", ""))
                         elif block.get("type") == "tool_use":
                             if text_parts:
-                                messages.append(Message(type="text", content="\n".join(text_parts)))
+                                messages.append(
+                                    Message(type="text", content="\n".join(text_parts))
+                                )
                                 text_parts = []
-                            messages.append(Message(
-                                type="tool_use",
-                                content=f"Using {block.get('name', 'unknown')}",
-                                tool_name=block.get("name"),
-                                tool_input=block.get("input"),
-                            ))
+                            messages.append(
+                                Message(
+                                    type="tool_use",
+                                    content=f"Using {block.get('name', 'unknown')}",
+                                    tool_name=block.get("name"),
+                                    tool_input=block.get("input"),
+                                )
+                            )
 
-                # Flush remaining text
                 if text_parts:
                     messages.append(Message(type="text", content="\n".join(text_parts)))
 
@@ -232,17 +270,7 @@ class SessionManager:
 
         return messages
 
-    def _update_session_state(self, session: str, session_id: str) -> None:
-        """Update the session state with a new session ID."""
-        self._state.sessions[session] = SessionState(
-            session_id=session_id,
-            agent=session,
-            created_at=datetime.now(),
-        )
-        self._save_state()
-        logger.info(f"Updated session state for {session}: {session_id}")
-
-    def send_message_sync(self, session: str, content: str) -> Iterator[Message]:
+    def send_message_sync(self, session_id: str, content: str) -> Iterator[Message]:
         """Send a message synchronously (for Streamlit).
 
         Uses a queue to bridge async streaming to sync iteration.
@@ -251,69 +279,95 @@ class SessionManager:
 
         async def stream_and_queue():
             try:
-                async for msg in self._stream_message_async(session, content):
+                async for msg in self._stream_message_async(session_id, content):
                     result_queue.put(msg)
             except Exception as e:
                 result_queue.put(Message(type="error", content=str(e)))
             finally:
-                result_queue.put(None)  # Signal completion
+                result_queue.put(None)
 
-        # Submit to background loop
         asyncio.run_coroutine_threadsafe(stream_and_queue(), self._loop)
 
-        # Yield from queue as messages arrive
         while True:
             msg = result_queue.get()
             if msg is None:
                 break
             yield msg
 
-    async def send_message(self, session: str, content: str):
+    async def send_message(self, session_id: str, content: str):
         """Send a message asynchronously (streaming)."""
-        async for msg in self._stream_message_async(session, content):
+        async for msg in self._stream_message_async(session_id, content):
             yield msg
 
     def get_sessions_sync(self) -> list[SessionInfo]:
-        """Get all available sessions (synchronous)."""
+        """Get all sessions across all agents."""
         sessions = []
-        for name, config in self._agents.items():
-            session_state = self._state.sessions.get(name)
+        for session_id, session_state in self._state.sessions.items():
             sessions.append(
                 SessionInfo(
-                    name=name,
-                    session_id=session_state.session_id if session_state else "",
-                    agent=config.name,
-                    created_at=session_state.created_at if session_state else datetime.now(),
-                    is_busy=self._busy.get(name, False),
+                    session_id=session_id,
+                    agent=session_state.agent,
+                    label=session_state.label,
+                    created_at=session_state.created_at,
+                    status=session_state.status,
+                    is_busy=self._busy.get(session_id, False),
                 )
             )
+        # Sort by created_at descending
+        sessions.sort(key=lambda s: s.created_at, reverse=True)
         return sessions
 
     async def get_sessions(self) -> list[SessionInfo]:
         """Get all available sessions."""
         return self.get_sessions_sync()
 
-    def is_busy(self, session: str) -> bool:
-        """Check if a session is currently processing."""
-        return self._busy.get(session, False)
+    def get_session(self, session_id: str) -> SessionInfo | None:
+        """Get a specific session by ID."""
+        session_state = self._state.sessions.get(session_id)
+        if session_state is None:
+            return None
+        return SessionInfo(
+            session_id=session_id,
+            agent=session_state.agent,
+            label=session_state.label,
+            created_at=session_state.created_at,
+            status=session_state.status,
+            is_busy=self._busy.get(session_id, False),
+        )
 
-    def get_session_id(self, session: str) -> str | None:
-        """Get the SDK session ID for a named session."""
-        if session in self._state.sessions:
-            return self._state.sessions[session].session_id
-        return None
+    def get_agents(self) -> list[str]:
+        """Get list of available agent names."""
+        return list(self._agents.keys())
+
+    def is_busy(self, session_id: str) -> bool:
+        """Check if a session is currently processing."""
+        return self._busy.get(session_id, False)
+
+    def archive_session(self, session_id: str) -> None:
+        """Archive a session (mark as inactive)."""
+        if session_id in self._state.sessions:
+            self._state.sessions[session_id].status = "archived"
+            self._save_state()
+            logger.info(f"Archived session {session_id}")
+
+    def unarchive_session(self, session_id: str) -> None:
+        """Unarchive a session (mark as active)."""
+        if session_id in self._state.sessions:
+            self._state.sessions[session_id].status = "active"
+            self._save_state()
+            logger.info(f"Unarchived session {session_id}")
 
     async def shutdown(self) -> None:
         """Gracefully shutdown all sessions."""
         logger.info("Shutting down session manager...")
 
-        for name, client in self._clients.items():
+        for session_id, client in self._clients.items():
             try:
                 await client.interrupt()
                 await client.disconnect()
-                logger.info(f"Disconnected client for {name}")
+                logger.info(f"Disconnected client for session {session_id}")
             except Exception as e:
-                logger.error(f"Error disconnecting {name}: {e}")
+                logger.error(f"Error disconnecting {session_id}: {e}")
 
         self._clients.clear()
         self._loop.call_soon_threadsafe(self._loop.stop)
