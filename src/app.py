@@ -239,11 +239,11 @@ def init_messages(session_id: str, manager: SessionManager) -> None:
             for entry in history:
                 if entry.type == "user" and entry.content and entry.content.strip():
                     messages.append({"role": "user", "content": entry.content})
-                elif entry.type == "assistant" and entry.content:
+                elif entry.type == "assistant" and (entry.content or entry.tool_uses):
                     messages.append(
                         {
                             "role": "assistant",
-                            "content": entry.content,
+                            "content": entry.content or "",
                             "tool_uses": entry.tool_uses,
                         }
                     )
