@@ -33,6 +33,13 @@ class TestEncodeProjectPath:
         result = encode_project_path(tmp_path)
         assert "/" not in result
 
+    def test_hidden_directory(self):
+        """SDK encodes dots as dashes for hidden directories."""
+        path = Path("/home/dan/.cordell/workspaces/main")
+        result = encode_project_path(path)
+        assert "." not in result
+        assert "-home-dan--cordell-workspaces-main" == result
+
 
 class TestGetSessionDir:
     """Tests for get_session_dir."""

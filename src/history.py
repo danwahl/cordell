@@ -29,10 +29,11 @@ _cache: dict[str, HistoryCache] = {}
 def encode_project_path(workspace: Path) -> str:
     """Encode a workspace path for the SDK's project directory naming.
 
-    The SDK uses the absolute path with "/" replaced by "-".
-    Example: /home/dan/project -> -home-dan-project
+    The SDK uses the absolute path with "/" and "." replaced by "-".
+    Example: /home/dan/.cordell/project -> -home-dan--cordell-project
     """
-    return str(workspace.absolute()).replace("/", "-")
+    path_str = str(workspace.absolute())
+    return path_str.replace("/", "-").replace(".", "-")
 
 
 def get_claude_projects_dir() -> Path:

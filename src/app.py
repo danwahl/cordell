@@ -14,7 +14,7 @@ from config import get_workspaces_dir
 from history import get_history
 from logging_utils import setup_logging
 from notifications import NotificationBus
-from protocols import HistoryEntry, Message
+from protocols import Message
 from session_manager import SessionManager
 
 # Initialize logging
@@ -119,61 +119,65 @@ def render_sidebar(manager: SessionManager, bus: NotificationBus) -> str | None:
         return selected
 
 
-def render_history(session_name: str, manager: SessionManager) -> None:
-    """Render the conversation history."""
-    session_id = manager.get_session_id(session_name)
-    if not session_id:
+def get_messages_key(session_name: str) -> str:
+    """Get the session state key for a session's messages."""
+    return f"messages_{session_name}"
+
+
+def init_messages(session_name: str, manager: SessionManager) -> None:
+    """Initialize messages from history if not already loaded."""
+    key = get_messages_key(session_name)
+
+    if key not in st.session_state:
+        # Load from history on first access
+        session_id = manager.get_session_id(session_name)
+        messages = []
+
+        if session_id:
+            workspace = get_workspaces_dir() / session_name
+            history = get_history(session_id, workspace, limit=100)
+
+            for entry in history:
+                if entry.type == "user" and entry.content and entry.content.strip():
+                    messages.append({"role": "user", "content": entry.content})
+                elif entry.type == "assistant" and entry.content:
+                    messages.append({
+                        "role": "assistant",
+                        "content": entry.content,
+                        "tool_uses": entry.tool_uses,
+                    })
+
+        st.session_state[key] = messages
+
+
+def display_messages(session_name: str) -> None:
+    """Display all messages for a session."""
+    key = get_messages_key(session_name)
+    messages = st.session_state.get(key, [])
+
+    if not messages:
         st.caption("No conversation history yet. Send a message to start!")
         return
 
-    workspace = get_workspaces_dir() / session_name
-    history = get_history(session_id, workspace, limit=100)
+    for msg in messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-    for entry in history:
-        render_history_entry(entry)
-
-
-def render_history_entry(entry: HistoryEntry) -> None:
-    """Render a single history entry."""
-    if entry.type == "user":
-        with st.chat_message("user"):
-            st.markdown(entry.content)
-    elif entry.type == "assistant":
-        with st.chat_message("assistant"):
-            if entry.content:
-                st.markdown(entry.content)
-
-            # Show tool uses in expanders
-            for tool in entry.tool_uses:
+            # Show tool uses for assistant messages
+            tool_uses = msg.get("tool_uses", [])
+            for tool in tool_uses:
                 with st.expander(f"🔧 {tool.name}"):
                     st.json(tool.input)
                     if tool.output:
                         st.text(tool.output[:500])
-    elif entry.type == "system":
-        with st.chat_message("assistant", avatar="⚙️"):
-            st.caption(entry.content[:200])
 
 
-def render_message(msg: Message) -> None:
-    """Render a streaming message."""
-    if msg.type == "text":
-        st.markdown(msg.content)
-    elif msg.type == "tool_use":
-        with st.expander(f"🔧 {msg.tool_name}", expanded=True):
-            if msg.tool_input:
-                st.json(msg.tool_input)
-    elif msg.type == "tool_result":
-        st.caption(f"Result: {msg.content[:200]}...")
-    elif msg.type == "error":
-        st.error(msg.content)
+def stream_response(manager: SessionManager, session: str, content: str) -> str:
+    """Stream the response and return the full text."""
+    full_response = ""
 
-
-def stream_response(manager: SessionManager, session: str, content: str) -> None:
-    """Stream the response from the session manager."""
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
-        full_response = ""
-        tool_expanders = []
 
         for msg in manager.send_message_sync(session, content):
             if msg.type == "text":
@@ -193,6 +197,8 @@ def stream_response(manager: SessionManager, session: str, content: str) -> None
         # Final render without cursor
         if full_response:
             message_placeholder.markdown(full_response)
+
+    return full_response
 
 
 def main() -> None:
@@ -218,20 +224,26 @@ def main() -> None:
     # Main chat area
     st.header(f"Chat with {selected_session}")
 
-    # Render history
-    render_history(selected_session, manager)
+    # Initialize messages from history
+    init_messages(selected_session, manager)
+
+    # Display existing messages
+    display_messages(selected_session)
 
     # Chat input
     if prompt := st.chat_input("Send a message...", disabled=manager.is_busy(selected_session)):
-        # Show user message
+        # Add user message to session state
+        key = get_messages_key(selected_session)
+        st.session_state[key].append({"role": "user", "content": prompt})
+
+        # Display user message
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # Stream response
-        stream_response(manager, selected_session, prompt)
-
-        # Rerun to update history
-        st.rerun()
+        # Stream response and add to session state
+        response = stream_response(manager, selected_session, prompt)
+        if response:
+            st.session_state[key].append({"role": "assistant", "content": response})
 
 
 if __name__ == "__main__":

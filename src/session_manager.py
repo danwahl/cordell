@@ -124,6 +124,8 @@ class SessionManager:
         try:
             options = self._build_options(agent_config, session_id)
             client = ClaudeSDKClient(options=options)
+            await client.connect()
+            logger.info(f"Connected client for agent {agent_name}")
             self._clients[agent_name] = client
             self._locks[agent_name] = asyncio.Lock()
             self._busy[agent_name] = False
@@ -137,15 +139,14 @@ class SessionManager:
 
         return client
 
-    async def _send_message_async(self, session: str, content: str) -> list[Message]:
-        """Send a message and collect the response (internal async version)."""
+    async def _stream_message_async(self, session: str, content: str):
+        """Stream messages as they arrive (async generator)."""
         client = await self._get_or_create_client(session)
 
         # Acquire lock
         lock = self._locks[session]
         async with lock:
             self._busy[session] = True
-            messages: list[Message] = []
 
             try:
                 await client.query(content)
@@ -160,54 +161,76 @@ class SessionManager:
                                 self._update_session_state(session, new_session_id)
                                 session_id_captured = True
 
-                    # Convert SDK message to our Message type
-                    converted = self._convert_message(msg)
-                    if converted:
-                        messages.append(converted)
+                    # Convert and yield SDK messages
+                    for converted in self._convert_message(msg):
+                        yield converted
 
             except Exception as e:
                 logger.error(f"Error sending message to {session}: {e}")
-                messages.append(Message(type="error", content=str(e)))
+                yield Message(type="error", content=str(e))
             finally:
                 self._busy[session] = False
 
-        messages.append(Message(type="done", content=""))
-        return messages
+        yield Message(type="done", content="")
 
-    def _convert_message(self, msg) -> Message | None:
-        """Convert an SDK message to our Message type."""
-        # Handle different message types from the SDK
-        msg_type = getattr(msg, "type", None)
+    def _convert_message(self, msg) -> list[Message]:
+        """Convert an SDK message to our Message type(s)."""
+        class_name = type(msg).__name__
+        messages = []
 
-        if msg_type == "assistant":
-            content = getattr(msg, "message", {})
-            if isinstance(content, dict):
-                content_blocks = content.get("content", [])
-            else:
-                content_blocks = getattr(content, "content", [])
-
-            # Extract text content
-            text_parts = []
-            for block in content_blocks if isinstance(content_blocks, list) else []:
-                if isinstance(block, dict):
-                    if block.get("type") == "text":
-                        text_parts.append(block.get("text", ""))
-                    elif block.get("type") == "tool_use":
-                        return Message(
-                            type="tool_use",
-                            content=f"Using {block.get('name', 'unknown')}",
-                            tool_name=block.get("name"),
-                            tool_input=block.get("input"),
-                        )
-
-            if text_parts:
-                return Message(type="text", content="\n".join(text_parts))
-
-        elif msg_type == "tool_result":
+        if class_name == "AssistantMessage":
             content = getattr(msg, "content", "")
-            return Message(type="tool_result", content=str(content)[:500])
 
-        return None
+            if isinstance(content, str) and content:
+                messages.append(Message(type="text", content=content))
+            elif isinstance(content, list):
+                text_parts = []
+                for block in content:
+                    # Check block class name (SDK uses TextBlock, ToolUseBlock, etc.)
+                    block_class = type(block).__name__
+
+                    if block_class == "TextBlock":
+                        text = getattr(block, "text", "")
+                        if text:
+                            text_parts.append(text)
+                    elif block_class == "ToolUseBlock":
+                        # Flush any accumulated text first
+                        if text_parts:
+                            messages.append(Message(type="text", content="\n".join(text_parts)))
+                            text_parts = []
+                        # Add tool use
+                        name = getattr(block, "name", None)
+                        input_data = getattr(block, "input", None)
+                        messages.append(Message(
+                            type="tool_use",
+                            content=f"Using {name or 'unknown'}",
+                            tool_name=name,
+                            tool_input=input_data,
+                        ))
+                    elif isinstance(block, dict):
+                        # Fallback for dict-based blocks
+                        if block.get("type") == "text":
+                            text_parts.append(block.get("text", ""))
+                        elif block.get("type") == "tool_use":
+                            if text_parts:
+                                messages.append(Message(type="text", content="\n".join(text_parts)))
+                                text_parts = []
+                            messages.append(Message(
+                                type="tool_use",
+                                content=f"Using {block.get('name', 'unknown')}",
+                                tool_name=block.get("name"),
+                                tool_input=block.get("input"),
+                            ))
+
+                # Flush remaining text
+                if text_parts:
+                    messages.append(Message(type="text", content="\n".join(text_parts)))
+
+        elif class_name == "ToolResultMessage":
+            content = getattr(msg, "content", "")
+            messages.append(Message(type="tool_result", content=str(content)[:500]))
+
+        return messages
 
     def _update_session_state(self, session: str, session_id: str) -> None:
         """Update the session state with a new session ID."""
@@ -222,14 +245,13 @@ class SessionManager:
     def send_message_sync(self, session: str, content: str) -> Iterator[Message]:
         """Send a message synchronously (for Streamlit).
 
-        Uses a queue to bridge async iteration to sync.
+        Uses a queue to bridge async streaming to sync iteration.
         """
         result_queue: queue.Queue[Message | None] = queue.Queue()
 
-        async def run_and_queue():
+        async def stream_and_queue():
             try:
-                messages = await self._send_message_async(session, content)
-                for msg in messages:
+                async for msg in self._stream_message_async(session, content):
                     result_queue.put(msg)
             except Exception as e:
                 result_queue.put(Message(type="error", content=str(e)))
@@ -237,9 +259,9 @@ class SessionManager:
                 result_queue.put(None)  # Signal completion
 
         # Submit to background loop
-        asyncio.run_coroutine_threadsafe(run_and_queue(), self._loop)
+        asyncio.run_coroutine_threadsafe(stream_and_queue(), self._loop)
 
-        # Yield from queue
+        # Yield from queue as messages arrive
         while True:
             msg = result_queue.get()
             if msg is None:
@@ -247,9 +269,8 @@ class SessionManager:
             yield msg
 
     async def send_message(self, session: str, content: str):
-        """Send a message asynchronously."""
-        messages = await self._send_message_async(session, content)
-        for msg in messages:
+        """Send a message asynchronously (streaming)."""
+        async for msg in self._stream_message_async(session, content):
             yield msg
 
     def get_sessions_sync(self) -> list[SessionInfo]:
