@@ -1,0 +1,22 @@
+# Development overrides
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  cordell:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      # Mount source code for live reload
+      - ./src:/app/src:ro
+      - ./agents:/app/agents:ro
+      # Use local directories for state (easier debugging)
+      - ./.cordell-dev:/home/cordell/.cordell
+      - ./.claude-dev:/home/cordell/.claude
+    environment:
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}
+      - CORDELL_LOG_LEVEL=DEBUG
+    # Relax security for development
+    read_only: false
+    security_opt: []
+    cap_drop: []

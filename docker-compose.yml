@@ -1,0 +1,32 @@
+services:
+  cordell:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cordell
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    volumes:
+      # Persist Cordell state
+      - cordell-data:/home/cordell/.cordell
+      # Persist Claude session data
+      - claude-data:/home/cordell/.claude
+      # Mount custom agents (optional override)
+      - ./agents:/app/agents:ro
+    environment:
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}
+      - CORDELL_LOG_LEVEL=${CORDELL_LOG_LEVEL:-INFO}
+    # Security settings
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/cordell/.cache
+    cap_drop:
+      - ALL
+
+volumes:
+  cordell-data:
+  claude-data:

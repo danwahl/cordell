@@ -16,5 +16,6 @@ wheels/
 .idea/
 .vscode/
 
-# Cordell data (bind mounted in production)
-dev-data/
+# Dev data directories (used by docker-compose.dev.yml)
+.cordell-dev/
+.claude-dev/
