@@ -95,12 +95,10 @@ class SessionManager:
             model=agent_config.model,
             system_prompt=system_prompt,
             permission_mode=agent_config.permission_mode,
-            allowed_tools=agent_config.allowed_tools
-            if agent_config.allowed_tools
-            else None,
+            allowed_tools=agent_config.allowed_tools or None,
             cwd=str(workspace),
             resume=resume_id,
-            env=agent_config.env if agent_config.env else None,
+            env=agent_config.env or {},
         )
 
         return options
