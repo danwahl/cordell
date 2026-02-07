@@ -1,0 +1,10 @@
+name: monitor
+model: haiku
+system_prompt_file: CLAUDE.md
+permission_mode: default
+allowed_tools:
+  - Read
+  - Bash
+  - Glob
+  - Grep
+env: {}
