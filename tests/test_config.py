@@ -1,7 +1,5 @@
 """Tests for config module."""
 
-import json
-import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -10,10 +8,10 @@ import yaml
 
 from config import (
     AgentConfig,
-    CordellConfig,
     JobConfig,
     SessionsState,
     SessionState,
+    create_session_state,
     load_agent_config,
     load_all_agents,
     load_cordell_config,
@@ -171,9 +169,10 @@ class TestSessionState:
         # Create state
         state = SessionsState(
             sessions={
-                "main": SessionState(
+                "test-123": SessionState(
                     session_id="test-123",
                     agent="main",
+                    label="main — Jan 1",
                     created_at=datetime(2024, 1, 1, 12, 0, 0),
                 ),
             }
@@ -188,6 +187,86 @@ class TestSessionState:
 
         # Load
         loaded = load_sessions_state()
-        assert "main" in loaded.sessions
-        assert loaded.sessions["main"].session_id == "test-123"
-        assert loaded.sessions["main"].agent == "main"
+        assert "test-123" in loaded.sessions
+        assert loaded.sessions["test-123"].session_id == "test-123"
+        assert loaded.sessions["test-123"].agent == "main"
+        assert loaded.sessions["test-123"].label == "main — Jan 1"
+        assert loaded.sessions["test-123"].status == "active"
+
+    def test_get_active_session(self):
+        """get_active_session returns the most recent active session for an agent."""
+        state = SessionsState(
+            sessions={
+                "old": SessionState(
+                    session_id="old",
+                    agent="main",
+                    label="main — Jan 1",
+                    created_at=datetime(2024, 1, 1),
+                    status="active",
+                ),
+                "new": SessionState(
+                    session_id="new",
+                    agent="main",
+                    label="main — Jan 2",
+                    created_at=datetime(2024, 1, 2),
+                    status="active",
+                ),
+                "archived": SessionState(
+                    session_id="archived",
+                    agent="main",
+                    label="main — Jan 3",
+                    created_at=datetime(2024, 1, 3),
+                    status="archived",
+                ),
+            }
+        )
+        active = state.get_active_session("main")
+        assert active is not None
+        assert active.session_id == "new"
+
+    def test_get_active_session_none(self):
+        """get_active_session returns None when no active sessions exist."""
+        state = SessionsState()
+        assert state.get_active_session("main") is None
+
+    def test_get_sessions_for_agent(self):
+        """get_sessions_for_agent returns sessions sorted by created_at descending."""
+        state = SessionsState(
+            sessions={
+                "old": SessionState(
+                    session_id="old",
+                    agent="main",
+                    label="main — Jan 1",
+                    created_at=datetime(2024, 1, 1),
+                ),
+                "new": SessionState(
+                    session_id="new",
+                    agent="main",
+                    label="main — Jan 2",
+                    created_at=datetime(2024, 1, 2),
+                ),
+                "other": SessionState(
+                    session_id="other",
+                    agent="monitor",
+                    label="monitor — Jan 1",
+                    created_at=datetime(2024, 1, 1),
+                ),
+            }
+        )
+        main_sessions = state.get_sessions_for_agent("main")
+        assert len(main_sessions) == 2
+        assert main_sessions[0].session_id == "new"
+        assert main_sessions[1].session_id == "old"
+
+
+class TestCreateSessionState:
+    """Tests for create_session_state helper."""
+
+    def test_creates_state(self):
+        """create_session_state creates a session with auto-generated label."""
+        state = create_session_state("main", "abc-123")
+        assert state.session_id == "abc-123"
+        assert state.agent == "main"
+        assert state.status == "active"
+        assert "main" in state.label
+        assert state.created_at is not None

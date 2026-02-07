@@ -43,10 +43,11 @@ class HistoryEntry:
 class SessionInfo:
     """Information about a session."""
 
-    name: str
     session_id: str
     agent: str
+    label: str
     created_at: datetime
+    status: Literal["active", "archived"] = "active"
     is_busy: bool = False
 
 
@@ -75,14 +76,12 @@ class SessionManagerProtocol(Protocol):
     """Protocol for session management."""
 
     async def send_message(
-        self, session: str, content: str
+        self, session_id: str, content: str
     ) -> AsyncIterator[Message]:
         """Send a message to a session and stream the response."""
         ...
 
-    def send_message_sync(
-        self, session: str, content: str
-    ) -> Iterator[Message]:
+    def send_message_sync(self, session_id: str, content: str) -> Iterator[Message]:
         """Synchronous wrapper for send_message."""
         ...
 
@@ -94,8 +93,16 @@ class SessionManagerProtocol(Protocol):
         """Synchronous wrapper for get_sessions."""
         ...
 
-    def is_busy(self, session: str) -> bool:
+    def is_busy(self, session_id: str) -> bool:
         """Check if a session is currently processing."""
+        ...
+
+    def get_session(self, session_id: str) -> SessionInfo | None:
+        """Get a specific session by ID."""
+        ...
+
+    def create_session(self, agent_name: str) -> SessionInfo:
+        """Create a new session for an agent."""
         ...
 
     async def shutdown(self) -> None:

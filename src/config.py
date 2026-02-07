@@ -45,13 +45,44 @@ class SessionState(BaseModel):
 
     session_id: str
     agent: str
+    label: str
     created_at: datetime
+    status: Literal["active", "archived"] = "active"
 
 
 class SessionsState(BaseModel):
     """Container for all session states."""
 
     sessions: dict[str, SessionState] = Field(default_factory=dict)
+
+    def get_active_session(self, agent_name: str) -> SessionState | None:
+        """Get the most recent active session for a given agent."""
+        active = [
+            s
+            for s in self.sessions.values()
+            if s.agent == agent_name and s.status == "active"
+        ]
+        if not active:
+            return None
+        return max(active, key=lambda s: s.created_at)
+
+    def get_sessions_for_agent(self, agent_name: str) -> list[SessionState]:
+        """Get all sessions for an agent, sorted by created_at descending."""
+        sessions = [s for s in self.sessions.values() if s.agent == agent_name]
+        return sorted(sessions, key=lambda s: s.created_at, reverse=True)
+
+
+def create_session_state(agent_name: str, session_id: str) -> SessionState:
+    """Create a new SessionState with auto-generated label and timestamp."""
+    now = datetime.now()
+    label = f"{agent_name} — {now.strftime('%b %-d')}"
+    return SessionState(
+        session_id=session_id,
+        agent=agent_name,
+        label=label,
+        created_at=now,
+        status="active",
+    )
 
 
 def get_cordell_dir() -> Path:
