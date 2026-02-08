@@ -51,6 +51,7 @@ class SessionManager:
         self._locks: dict[str, asyncio.Lock] = {}  # Keyed by session_id
         self._busy: dict[str, bool] = {}  # Keyed by session_id
         self._state: SessionsState = SessionsState()
+        self._cordell_mcp_server = None  # Injected MCP server for Cordell tools
 
         # Asyncio event loop in background thread
         self._loop = asyncio.new_event_loop()
@@ -79,6 +80,10 @@ class SessionManager:
     def _save_state(self) -> None:
         """Save session state to disk."""
         save_sessions_state(self._state)
+
+    def set_cordell_mcp_server(self, server) -> None:
+        """Inject the Cordell MCP server after construction."""
+        self._cordell_mcp_server = server
 
     def get_workspace(self, session_id: str) -> Path | None:
         """Get the workspace directory for a session."""
@@ -127,6 +132,13 @@ class SessionManager:
         env = dict(agent_config.env or {})
         env.setdefault("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", "80")
 
+        # Merge MCP servers from agent config and any injected servers
+        mcp_servers = {}
+        if self._cordell_mcp_server:
+            mcp_servers["cordell"] = self._cordell_mcp_server
+        if agent_config.mcp_servers:
+            mcp_servers.update(agent_config.mcp_servers)
+
         options = ClaudeAgentOptions(
             model=agent_config.model,
             permission_mode=agent_config.permission_mode,
@@ -135,6 +147,7 @@ class SessionManager:
             resume=resume_id,
             env=env,
             setting_sources=["project", "user"],
+            mcp_servers=mcp_servers if mcp_servers else None,
         )
 
         return options

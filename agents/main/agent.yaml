@@ -10,4 +10,5 @@ allowed_tools:
   - Grep
   - WebFetch
   - WebSearch
+  - mcp__cordell__*
 env: {}

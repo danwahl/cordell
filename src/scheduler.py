@@ -162,3 +162,47 @@ class Scheduler:
             }
             for job in self._scheduler.get_jobs()
         ]
+
+    def add_job_dynamic(
+        self, name: str, agent: str, schedule: str, prompt: str
+    ) -> None:
+        """Add a job at runtime and persist to config."""
+        job_config = JobConfig(agent=agent, schedule=schedule, prompt=prompt)
+        self._config.jobs[name] = job_config
+        self._add_job(name, job_config)
+        self._persist_config()
+
+    def remove_job_dynamic(self, name: str) -> None:
+        """Remove a job at runtime and persist."""
+        if name in self._config.jobs:
+            del self._config.jobs[name]
+        try:
+            self._scheduler.remove_job(name)
+        except Exception:
+            pass
+        self._persist_config()
+
+    def _persist_config(self) -> None:
+        """Write current job config back to config.yaml."""
+        import yaml
+
+        from config import get_cordell_dir
+
+        config_path = get_cordell_dir() / "config.yaml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+
+        data: dict = {"jobs": {}}
+        for name, job in self._config.jobs.items():
+            job_data: dict = {
+                "agent": job.agent,
+                "schedule": job.schedule,
+                "prompt": job.prompt,
+            }
+            if job.active_hours:
+                job_data["active_hours"] = list(job.active_hours)
+            if job.suppress_ok:
+                job_data["suppress_ok"] = True
+            data["jobs"][name] = job_data
+
+        with open(config_path, "w") as f:
+            yaml.dump(data, f, default_flow_style=False)

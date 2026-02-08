@@ -38,12 +38,20 @@ class TestAgentConfig:
             permission_mode="acceptEdits",
             allowed_tools=["Read", "Write", "Bash"],
             env={"ANTHROPIC_MODEL": "custom"},
+            mcp_servers={"github": {"command": "npx", "args": ["@mcp/github"]}},
         )
         assert config.name == "main"
         assert config.model == "opus"
         assert config.permission_mode == "acceptEdits"
         assert config.allowed_tools == ["Read", "Write", "Bash"]
         assert config.env == {"ANTHROPIC_MODEL": "custom"}
+        assert config.mcp_servers == {
+            "github": {"command": "npx", "args": ["@mcp/github"]}
+        }
+
+    def test_mcp_servers_default_empty(self):
+        config = AgentConfig(name="test")
+        assert config.mcp_servers == {}
 
 
 class TestJobConfig:

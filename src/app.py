@@ -49,6 +49,28 @@ def get_notification_bus() -> NotificationBus:
     return NotificationBus()
 
 
+@st.cache_resource
+def get_scheduler(_manager: SessionManager):
+    """Get or create the scheduler (singleton).
+
+    Also creates and injects the Cordell MCP server into the session manager.
+    """
+    from config import load_cordell_config
+    from cordell_tools import create_cordell_mcp_server
+    from scheduler import Scheduler
+
+    config = load_cordell_config()
+    bus = get_notification_bus()
+    scheduler = Scheduler(config, _manager, bus)
+
+    # Create and inject Cordell MCP tools
+    cordell_server = create_cordell_mcp_server(scheduler)
+    _manager.set_cordell_mcp_server(cordell_server)
+
+    scheduler.start()
+    return scheduler
+
+
 def setup_signal_handlers(manager: SessionManager) -> None:
     """Set up signal handlers for graceful shutdown."""
 
@@ -293,6 +315,10 @@ def main() -> None:
     # Initialize components
     manager = get_session_manager()
     bus = get_notification_bus()
+
+    # Initialize scheduler (also injects Cordell MCP tools into manager)
+    # The _ assignment suppresses the "unused variable" warning
+    _ = get_scheduler(manager)
 
     # Set up signal handlers (only works in main thread)
     try:

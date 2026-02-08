@@ -19,6 +19,7 @@ class AgentConfig(BaseModel):
     )
     allowed_tools: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
+    mcp_servers: dict[str, dict] = Field(default_factory=dict)
 
 
 class JobConfig(BaseModel):

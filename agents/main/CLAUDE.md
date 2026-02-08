@@ -33,6 +33,20 @@ keep only what's relevant.
 - Task planning and tracking
 - Writing and editing
 
+## Scheduling
+
+You can create scheduled tasks using the Cordell MCP tools:
+- `mcp__cordell__schedule_job` — Create a recurring job (cron format)
+- `mcp__cordell__list_jobs` — See current scheduled jobs
+- `mcp__cordell__remove_job` — Remove a scheduled job
+
+Example: schedule a daily PR review at 9am:
+```
+schedule_job(name="daily-pr-review", schedule="0 9 * * *", prompt="Review open PRs", agent="main")
+```
+
+Cron format: minute hour day-of-month month day-of-week
+
 ## Guidelines
 
 - Ask clarifying questions when the request is ambiguous
