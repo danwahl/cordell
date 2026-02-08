@@ -200,40 +200,41 @@ def get_messages_key(session_id: str) -> str:
 
 
 def init_messages(session_id: str, manager: SessionManager) -> None:
-    """Initialize messages from history if not already loaded."""
+    """Load messages from JSONL history (source of truth).
+
+    Always rebuilds from JSONL - the mtime cache in history.py makes this cheap.
+    """
     key = get_messages_key(session_id)
+    messages: list[dict] = []
 
-    if key not in st.session_state:
-        messages: list[dict] = []
+    # Get workspace for this session
+    workspace = manager.get_workspace(session_id)
+    if workspace:
+        history = get_history(session_id, workspace, limit=100)
 
-        # Get workspace for this session
-        workspace = manager.get_workspace(session_id)
-        if workspace:
-            history = get_history(session_id, workspace, limit=100)
+        for entry in history:
+            if entry.type == "user" and entry.content and entry.content.strip():
+                messages.append({"role": "user", "content": entry.content})
+            elif entry.type == "assistant" and (entry.content or entry.tool_uses):
+                # Merge consecutive assistant messages (SDK stores them separately)
+                if messages and messages[-1]["role"] == "assistant":
+                    prev = messages[-1]
+                    if entry.content:
+                        if prev["content"]:
+                            prev["content"] += "\n" + entry.content
+                        else:
+                            prev["content"] = entry.content
+                    prev["tool_uses"].extend(entry.tool_uses)
+                else:
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": entry.content or "",
+                            "tool_uses": list(entry.tool_uses),
+                        }
+                    )
 
-            for entry in history:
-                if entry.type == "user" and entry.content and entry.content.strip():
-                    messages.append({"role": "user", "content": entry.content})
-                elif entry.type == "assistant" and (entry.content or entry.tool_uses):
-                    # Merge consecutive assistant messages (SDK stores them separately)
-                    if messages and messages[-1]["role"] == "assistant":
-                        prev = messages[-1]
-                        if entry.content:
-                            if prev["content"]:
-                                prev["content"] += "\n" + entry.content
-                            else:
-                                prev["content"] = entry.content
-                        prev["tool_uses"].extend(entry.tool_uses)
-                    else:
-                        messages.append(
-                            {
-                                "role": "assistant",
-                                "content": entry.content or "",
-                                "tool_uses": list(entry.tool_uses),
-                            }
-                        )
-
-        st.session_state[key] = messages
+    st.session_state[key] = messages
 
 
 def display_messages(session_id: str) -> None:
@@ -326,18 +327,12 @@ def main() -> None:
     if is_archived:
         st.info("This session is archived. Unarchive it to send messages.")
     elif prompt := st.chat_input("Send a message...", disabled=is_busy):
-        # Add user message to session state
-        key = get_messages_key(selected_session.session_id)
-        st.session_state[key].append({"role": "user", "content": prompt})
-
         # Display user message
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # Stream response and add to session state
-        response = stream_response(manager, selected_session.session_id, prompt)
-        if response:
-            st.session_state[key].append({"role": "assistant", "content": response})
+        # Stream response (JSONL is the source of truth, no need to append to state)
+        stream_response(manager, selected_session.session_id, prompt)
 
 
 if __name__ == "__main__":

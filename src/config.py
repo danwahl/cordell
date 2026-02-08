@@ -14,7 +14,6 @@ class AgentConfig(BaseModel):
 
     name: str
     model: str = "sonnet"
-    system_prompt_file: str | None = None
     permission_mode: Literal["default", "acceptEdits", "plan", "bypassPermissions"] = (
         "default"
     )
@@ -171,15 +170,3 @@ def save_sessions_state(state: SessionsState) -> None:
         import json
 
         json.dump(state.model_dump(mode="json"), f, indent=2, default=str)
-
-
-def get_agent_system_prompt(agent_config: AgentConfig, agent_dir: Path) -> str | None:
-    """Load the system prompt for an agent."""
-    if agent_config.system_prompt_file is None:
-        return None
-
-    prompt_path = agent_dir / agent_config.system_prompt_file
-    if not prompt_path.exists():
-        return None
-
-    return prompt_path.read_text()

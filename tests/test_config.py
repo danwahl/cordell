@@ -35,14 +35,12 @@ class TestAgentConfig:
         config = AgentConfig(
             name="main",
             model="opus",
-            system_prompt_file="CLAUDE.md",
             permission_mode="acceptEdits",
             allowed_tools=["Read", "Write", "Bash"],
             env={"ANTHROPIC_MODEL": "custom"},
         )
         assert config.name == "main"
         assert config.model == "opus"
-        assert config.system_prompt_file == "CLAUDE.md"
         assert config.permission_mode == "acceptEdits"
         assert config.allowed_tools == ["Read", "Write", "Bash"]
         assert config.env == {"ANTHROPIC_MODEL": "custom"}

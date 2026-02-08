@@ -7,17 +7,25 @@ and provides an asyncio bridge for Streamlit's synchronous runtime.
 import asyncio
 import logging
 import queue
+import shutil
 import threading
 from collections.abc import Iterator
 from pathlib import Path
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+    ResultMessage,
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+)
 
 from config import (
     AgentConfig,
     SessionsState,
     create_session_state,
-    get_agent_system_prompt,
     get_workspaces_dir,
     load_all_agents,
     load_sessions_state,
@@ -77,28 +85,56 @@ class SessionManager:
         session_state = self._state.sessions.get(session_id)
         if session_state is None:
             return None
-        workspace = get_workspaces_dir() / session_state.agent
+        return self._init_workspace(session_state.agent)
+
+    def _init_workspace(self, agent_name: str) -> Path:
+        """Initialize a workspace for an agent, copying template files."""
+        workspace = get_workspaces_dir() / agent_name
         workspace.mkdir(parents=True, exist_ok=True)
+
+        agent_dir = self._agents_dir / agent_name
+
+        # Copy template files if they don't already exist in workspace
+        for item in ["CLAUDE.md", ".mcp.json"]:
+            src = agent_dir / item
+            dst = workspace / item
+            if src.exists() and not dst.exists():
+                shutil.copy2(src, dst)
+
+        # Copy .claude/ directory if it exists
+        src_claude = agent_dir / ".claude"
+        dst_claude = workspace / ".claude"
+        if src_claude.exists() and not dst_claude.exists():
+            shutil.copytree(src_claude, dst_claude)
+
+        # Create memory files if they don't exist
+        memory_file = workspace / "MEMORY.md"
+        if not memory_file.exists():
+            memory_file.write_text("# Memory\n\nNo memories yet.\n")
+
+        memory_dir = workspace / "memory"
+        memory_dir.mkdir(exist_ok=True)
+
         return workspace
 
     def _build_options(
         self, agent_config: AgentConfig, resume_id: str | None = None
     ) -> ClaudeAgentOptions:
         """Build ClaudeAgentOptions from an agent configuration."""
-        agent_dir = self._agents_dir / agent_config.name
-        system_prompt = get_agent_system_prompt(agent_config, agent_dir)
+        workspace = self._init_workspace(agent_config.name)
 
-        workspace = get_workspaces_dir() / agent_config.name
-        workspace.mkdir(parents=True, exist_ok=True)
+        # Enable autocompaction to prevent running out of context
+        env = dict(agent_config.env or {})
+        env.setdefault("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", "80")
 
         options = ClaudeAgentOptions(
             model=agent_config.model,
-            system_prompt=system_prompt,
             permission_mode=agent_config.permission_mode,
             allowed_tools=agent_config.allowed_tools or None,
             cwd=str(workspace),
             resume=resume_id,
-            env=agent_config.env or {},
+            env=env,
+            setting_sources=["project", "user"],
         )
 
         return options
@@ -264,10 +300,9 @@ class SessionManager:
 
     def _convert_message(self, msg) -> list[Message]:
         """Convert an SDK message to our Message type(s)."""
-        class_name = type(msg).__name__
         messages = []
 
-        if class_name == "AssistantMessage":
+        if isinstance(msg, AssistantMessage):
             content = getattr(msg, "content", "")
 
             if isinstance(content, str) and content:
@@ -275,13 +310,11 @@ class SessionManager:
             elif isinstance(content, list):
                 text_parts = []
                 for block in content:
-                    block_class = type(block).__name__
-
-                    if block_class == "TextBlock":
+                    if isinstance(block, TextBlock):
                         text = getattr(block, "text", "")
                         if text:
                             text_parts.append(text)
-                    elif block_class == "ToolUseBlock":
+                    elif isinstance(block, ToolUseBlock):
                         if text_parts:
                             messages.append(
                                 Message(type="text", content="\n".join(text_parts))
@@ -298,6 +331,7 @@ class SessionManager:
                             )
                         )
                     elif isinstance(block, dict):
+                        # Fallback for dict-style blocks
                         if block.get("type") == "text":
                             text_parts.append(block.get("text", ""))
                         elif block.get("type") == "tool_use":
@@ -318,9 +352,13 @@ class SessionManager:
                 if text_parts:
                     messages.append(Message(type="text", content="\n".join(text_parts)))
 
-        elif class_name == "ToolResultMessage":
+        elif isinstance(msg, ToolResultBlock):
             content = getattr(msg, "content", "")
             messages.append(Message(type="tool_result", content=str(content)[:500]))
+
+        elif isinstance(msg, ResultMessage):
+            # ResultMessage signals end of response - no conversion needed
+            pass
 
         return messages
 

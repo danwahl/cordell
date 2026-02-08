@@ -1,6 +1,5 @@
 name: main
 model: sonnet
-system_prompt_file: CLAUDE.md
 permission_mode: default
 allowed_tools:
   - Read
