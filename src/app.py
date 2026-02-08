@@ -77,6 +77,9 @@ def render_sidebar(manager: SessionManager, bus: NotificationBus) -> SessionInfo
             st.warning("No agents configured. Add agents to the agents/ directory.")
             return None
 
+        # Prefer "main" agent, otherwise use first available
+        default_agent = "main" if "main" in agents else agents[0]
+
         # Group sessions by agent
         sessions_by_agent: dict[str, list[SessionInfo]] = {
             agent: [] for agent in agents
@@ -85,106 +88,78 @@ def render_sidebar(manager: SessionManager, bus: NotificationBus) -> SessionInfo
             if session.agent in sessions_by_agent:
                 sessions_by_agent[session.agent].append(session)
 
-        # Build session lookup and options
-        session_lookup: dict[str, SessionInfo] = {}
-        session_options: list[str] = []
-
-        for agent in agents:
-            agent_sessions = sessions_by_agent[agent]
-            if agent_sessions:
-                for session in agent_sessions:
-                    label = session.label
-                    if session.status == "archived":
-                        label = f"📦 {label}"
-                    session_lookup[label] = session
-                    session_options.append(label)
-            else:
-                # No sessions yet for this agent - create one on first use
-                pass
-
         # Initialize selected session in state
         if "selected_session_id" not in st.session_state:
-            # Default to most recent active session for first agent, or create one
-            for agent in agents:
-                if sessions_by_agent[agent]:
-                    active = [
-                        s for s in sessions_by_agent[agent] if s.status == "active"
-                    ]
-                    if active:
-                        st.session_state.selected_session_id = active[0].session_id
-                        break
+            # Default to most recent active session for default agent
+            if sessions_by_agent[default_agent]:
+                active = [
+                    s for s in sessions_by_agent[default_agent] if s.status == "active"
+                ]
+                if active:
+                    st.session_state.selected_session_id = active[0].session_id
+                else:
+                    st.session_state.selected_session_id = None
             else:
-                # No active sessions - will create on first agent selection
                 st.session_state.selected_session_id = None
 
-        st.subheader("Sessions")
-
-        # Agent selector for new sessions
+        # New session button with agent selector
         col1, col2 = st.columns([3, 1])
         with col1:
-            selected_agent = st.selectbox(
+            new_agent = st.selectbox(
                 "Agent",
                 agents,
+                index=agents.index(default_agent),
                 label_visibility="collapsed",
             )
         with col2:
             if st.button("➕", help="New session"):
-                new_session = manager.create_session(selected_agent)
+                new_session = manager.create_session(new_agent)
                 st.session_state.selected_session_id = new_session.session_id
                 st.rerun()
 
-        # Session list
-        if session_options:
-            # Find current selection label
-            current_label = None
-            for label, session in session_lookup.items():
-                if session.session_id == st.session_state.selected_session_id:
-                    current_label = label
-                    break
+        st.divider()
 
-            # If current selection not in options, default to first
-            if current_label not in session_options and session_options:
-                current_label = session_options[0]
-                st.session_state.selected_session_id = session_lookup[
-                    current_label
-                ].session_id
+        # Session list as clickable items
+        selected_session = None
+        for session in sessions:
+            is_selected = session.session_id == st.session_state.selected_session_id
+            if is_selected:
+                selected_session = session
 
-            selected_label = st.radio(
-                "Select session",
-                session_options,
-                index=session_options.index(current_label) if current_label else 0,
-                label_visibility="collapsed",
-            )
+            # Build label with icons
+            icon = "📦 " if session.status == "archived" else ""
+            label = f"{icon}{session.label}"
 
-            selected_session = session_lookup.get(selected_label)
-            if selected_session:
-                st.session_state.selected_session_id = selected_session.session_id
-
-                # Show busy indicator
-                if selected_session.is_busy:
-                    st.info("⏳ Processing...")
-
-                # Archive/unarchive button
-                if selected_session.status == "active":
-                    if st.button(
-                        "📦 Archive", key="archive_btn", use_container_width=True
-                    ):
-                        manager.archive_session(selected_session.session_id)
-                        st.rerun()
-                else:
-                    if st.button(
-                        "📂 Unarchive", key="unarchive_btn", use_container_width=True
-                    ):
-                        manager.unarchive_session(selected_session.session_id)
-                        st.rerun()
-        else:
-            # No sessions exist yet - create one for the first agent
-            st.caption("No sessions yet.")
-            if st.button("Create first session", use_container_width=True):
-                new_session = manager.create_session(agents[0])
-                st.session_state.selected_session_id = new_session.session_id
+            # Use button styling for selection
+            if st.button(
+                label,
+                key=f"session_{session.session_id}",
+                use_container_width=True,
+                type="primary" if is_selected else "secondary",
+            ):
+                st.session_state.selected_session_id = session.session_id
                 st.rerun()
-            selected_session = None
+
+        if not sessions:
+            st.caption("No sessions yet. Click ➕ to start.")
+
+        # Show actions for selected session
+        if selected_session:
+            st.divider()
+
+            # Show busy indicator
+            if selected_session.is_busy:
+                st.info("⏳ Processing...")
+
+            # Archive/unarchive button
+            if selected_session.status == "active":
+                if st.button("📦 Archive", key="archive_btn"):
+                    manager.archive_session(selected_session.session_id)
+                    st.rerun()
+            else:
+                if st.button("📂 Unarchive", key="unarchive_btn"):
+                    manager.unarchive_session(selected_session.session_id)
+                    st.rerun()
 
         st.divider()
 
